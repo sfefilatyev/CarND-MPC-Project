@@ -1,6 +1,78 @@
 # CarND-Controls-MPC
 Self-Driving Car Engineer Nanodegree Program
 
+In this project, a Model Predictive Control (MPC) agorithm is implemented for driving a simulated car around a race track. Actuations,
+such as throttle and steering are used to for navigating the simulated world. The model is trying to follow waypoints on the map given 
+to the vehicle at each communication session. These waypoints become the basis for planning the trajectory. 
+
+Video capture of a demo drive is located here: https://youtu.be/XE3AcftklB4
+
+The MPC model depends on the following state of the vehicle:
+x - position of the vehicle along X axis.
+y - position of the vehicle along Y axis.
+psi - oritentation of the vehicle in coordinate system.
+cte - Cross Track Error or distance to the reference line (ideal trajectory).
+epsi - orientation error - angle between ideal orientation of the vehicle moving along
+	the referenc line.
+v - speed of the vehicle.
+
+To control the vehicle, the model assume the following actuation parameters:
+delta - steering angle of the vehicle's wheels.
+a - throttle (accleration/deccelaration).
+
+The range of both `a` and `delta` are in [-1, 1]. For the actual kinematics, the range of delta is in between [-25, 25 ] degrees.
+
+Update equations of the state are as following ( I was following MPC_2_Line quiz):
+```
+      x1 = x0 + v0 * cos(psi0) * dt
+      y1 = y0 + v0 * sin(psi0) * dt
+      psi1 = psi0 + v0 * delta0 / Lf * dt
+      v1 = v0 + a0 * dt
+      cte1 = f0 - y0 + v0 * sin(epsi0) * dt
+      epsi1 = psi0 - psides0 + v0 * delta0 / Lf * dt
+```
+
+Where index 0 correspond to time `t` and indix 1 correspond to the time at `t+1`. `Lf` is the parameter describing the vehicle, distance from
+the center of the gravity to the steering axis of the vehicle. `dt` is the duration of time between `t` and `t+1`.
+
+The cost of the trajectory depended on a number of parameters - cte, epsi, as well as difference between reference velocity and current velocity,
+smoothness of acceleration and steering. All those factors were weighted.
+
+The most important parameter, found in meta-parameter optimitzation, was the number of actuation steps `N` and duration of the between actuations.
+I looked up some of the discussion on Udacity channel corresponding to the project and accepted `dt` as 100 ms for both optimality of duration as
+well as convenience of implementation for another aspect of the project - latency of actuation. By keeping duration at the same value as the 
+latency of actuation it was possible to postpone actuation by just one actuation step rather than trying to find a more complicated solution. 
+
+The parameter `N` regulating the number of steps was more tricky to find. Despite suggested value of `10` I saw in the channel, I found the value 8
+to be most optimal for high speed driving. I would like to strees, my goal in this project was to achieve the highest possible speed of the
+vehicle on the race track. The value of `N` of 8 was maximizing the speed while still keeping the vehicle in the drivable area. Even slight changes (such
+as `N=7` or `N=9` would change the balance significantly. I was able to reach 105 Miles per hour maximum speed while. I kept the reference veocity at
+120 MPH, even though was was never able to achieve it. Still, having this velocity at more than achievable, as well as tuning other parameters resulted
+in quite a high speed race. It was surpassing my PID-controlled car from the previous project by a factor or three.
+
+I was able to set the `N` to up to 15, but only with smaller speeds of the vehicle. Something intuition suggested that the overall duration of planning
+horizon should not suppass the reference path duration expressed in 6 waypoints given to the vehicle. In any case, with `N=8` I found a the best performance.
+
+Other parameters I tuned manually after exhaustive search were the weight of the `CTE` error and `EPsi` error, as well as smoothness of change of 
+steering and acceleration.
+
+One of the largest impacts on the implementation of the project (and the aspect little discussed and only slightly suggested) was to change the
+coordinate system to the one originating at the vehicle. This has conditioned the data well for the optimization to work. I transformed the coordinate 
+of the waypoints to the new coordinate system and fitted polynomials to the transformed coordinates. MPC was also working with the coordinate system,
+cendered at the vehicle. 
+
+Without centralizing the coordinating system, it the conroller was very unstable and was only able to drive at slow speeds.
+
+To deal with 100 ms latency I made two things:
+1) Chose the `dt` interval aligned with the latency, thus `dt=0.1`.
+2) Shifted the actuation inside the MPC optimization algorithm by one (see lines 114 at MPC.cpp).
+
+I need to admit, that although the latency is well accounted with such a shift the visualization is not accounted for it as it display the trajectory that
+was optimal 100 ms ago. I did not invest time into fixing at but it would be a nice proejct.
+
+I also would like to state, that with this project I had the most fun. Good job, Udacity!
+
+
 ---
 
 ## Dependencies

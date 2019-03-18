@@ -9,12 +9,16 @@
 using CppAD::AD;
 using Eigen::VectorXd;
 
-// Using suggested range for time duraction from udacity channel. Good for speeds ~ 35mph
-size_t N = 15;
-double dt = 0.1;
+// Manually tuned parameters. Parameter values were quite correlated with the reference speed
+// The slower the speed, the larger number of timesteps was possible to put. However, I realized
+// that it is not quite useful to have a planning horizon larger than the reference horizon (provided
+// with 6 reference points). The planning horizon may become larger than the reference at sharp turns
+// as provided 6 reference waypoints usually only go as far as a single turn.
+size_t N = 8; // This turned out to be my golden parameter to reach maximum speed of 105 MPH.
+double dt = 0.1; // Useful to keep in the same range as the latency for simplicity of latency prediction.
 
-// Simialrly to a corresponding mpc_to_line quiz I organized ranges of our variables
-// for clearer manipulation
+// Similarly to a corresponding mpc_to_line quiz I organized ranges of our variables
+// for clearer manipulation.
 size_t x_start = 0;
 size_t y_start = x_start + N;
 size_t psi_start = y_start + N;
@@ -22,7 +26,7 @@ size_t v_start = psi_start + N;
 size_t cte_start = v_start + N;
 size_t epsi_start = cte_start + N;
 size_t delta_start = epsi_start + N;
-size_t a_start = delta_start + N - 1;
+size_t a_start = delta_start + N - 1; // There are N-1 actuations!
 
 // This value assumes the model presented in the classroom is used.
 //
@@ -37,13 +41,12 @@ size_t a_start = delta_start + N - 1;
 const double Lf = 2.67;
 
 // Both the reference cross track and orientation errors are 0.
-// The reference velocity is set to 40 mph.
-
-double ref_v = 35;
+// The reference velocity is set to 120 MPH. I've never was able reach more than 105 MPH though.
+double ref_v = 120;
 
 class FG_eval {
  public:
-  // Fitted polynomial coefficients
+  // Fitted polynomial coefficients.
   VectorXd coeffs;
   FG_eval(VectorXd coeffs) { this->coeffs = coeffs; }
 
@@ -59,8 +62,8 @@ class FG_eval {
 
     // The the following part of the cost is based on the closeness to the reference state.
     for (int t = 0; t < N; ++t) {
-      fg[0] += CppAD::pow(vars[cte_start + t], 2);
-      fg[0] += CppAD::pow(vars[epsi_start + t], 2);
+      fg[0] += 1000*CppAD::pow(vars[cte_start + t], 2);
+      fg[0] += 1000*CppAD::pow(vars[epsi_start + t], 2);
       fg[0] += CppAD::pow(vars[v_start + t] - ref_v, 2);
     }
 
@@ -73,7 +76,7 @@ class FG_eval {
 
     // For smoothness/comfort of ride, minimizing the value gap between sequential actuations.
     for (int t = 0; t < N - 2; ++t) {
-      fg[0] += 1000 * CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
+      fg[0] += 3000*CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
       fg[0] += CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
     }
 
@@ -106,8 +109,13 @@ class FG_eval {
       AD<double> delta0 = vars[delta_start + t - 1];
       AD<double> a0 = vars[a_start + t - 1];
 
-      AD<double> f0 = coeffs[0] + coeffs[1] * x0;
-      AD<double> psides0 = CppAD::atan(coeffs[1]);
+      if (t > 1) {   // Latency handling - using older actuation (thus, delayed by exactly 0.1 s).
+        a0 = vars[a_start + t - 2];
+        delta0 = vars[delta_start + t - 2];
+      }
+
+      AD<double> f0 = coeffs[0] + coeffs[1] * x0 + coeffs[2] * CppAD::pow(x0, 2) + coeffs[3] * CppAD::pow(x0, 3);
+      AD<double> psides0 = CppAD::atan(coeffs[1] + 2 * coeffs[2] * x0 + 3 * coeffs[3] * CppAD::pow(x0, 2));
 
       // Setting state dependencies.
       fg[1 + x_start + t] = x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
@@ -146,11 +154,18 @@ std::vector<double> MPC::Solve(const VectorXd &state, const VectorXd &coeffs) {
   size_t n_constraints = N * 6;
 
   // Initial value of the independent variables.
-  // SHOULD BE 0 besides initial state.
   Dvector vars(n_vars);
   for (int i = 0; i < n_vars; ++i) {
     vars[i] = 0;
   }
+
+  // Set initial values to the known state.
+  vars[x_start] = x;
+  vars[y_start] = y;
+  vars[psi_start] = psi;
+  vars[v_start] = v;
+  vars[cte_start] = cte;
+  vars[epsi_start] = epsi;
 
   Dvector vars_lowerbound(n_vars);
   Dvector vars_upperbound(n_vars);
@@ -162,8 +177,8 @@ std::vector<double> MPC::Solve(const VectorXd &state, const VectorXd &coeffs) {
     vars_upperbound[i] = 1.0e19;
   }
 
-  // The upper and lower limits of delta are set to -25 and 25
-  // degrees (values in radians).
+  // The upper and lower limits of delta are set to -25 and 25.
+  // degrees (values are in radians).
   for (int i = delta_start; i < a_start; ++i) {
     vars_lowerbound[i] = -0.436332;
     vars_upperbound[i] = 0.436332;
@@ -175,7 +190,7 @@ std::vector<double> MPC::Solve(const VectorXd &state, const VectorXd &coeffs) {
     vars_upperbound[i] = 1.0;
   }
 
-  // Lower and upper limits for the constraints
+  // Lower and upper limits for the constraints.
   // Should be 0 besides initial state.
   Dvector constraints_lowerbound(n_constraints);
   Dvector constraints_upperbound(n_constraints);
@@ -184,13 +199,27 @@ std::vector<double> MPC::Solve(const VectorXd &state, const VectorXd &coeffs) {
     constraints_upperbound[i] = 0;
   }
 
-  // object that computes objective and constraints
+  constraints_lowerbound[x_start] = x;
+  constraints_lowerbound[y_start] = y;
+  constraints_lowerbound[psi_start] = psi;
+  constraints_lowerbound[v_start] = v;
+  constraints_lowerbound[cte_start] = cte;
+  constraints_lowerbound[epsi_start] = epsi;
+
+  constraints_upperbound[x_start] = x;
+  constraints_upperbound[y_start] = y;
+  constraints_upperbound[psi_start] = psi;
+  constraints_upperbound[v_start] = v;
+  constraints_upperbound[cte_start] = cte;
+  constraints_upperbound[epsi_start] = epsi;
+
+  // Object that computes objective and constraints.
   FG_eval fg_eval(coeffs);
 
   // NOTE: You don't have to worry about these options
-  // options for IPOPT solver
+  // options for IPOPT solver.
   std::string options;
-  // Uncomment this if you'd like more print information
+  // Uncomment this if you'd like more print information.
   options += "Integer print_level  0\n";
   // NOTE: Setting sparse to true allows the solver to take advantage
   //   of sparse routines, this makes the computation MUCH FASTER. If you can
@@ -202,15 +231,15 @@ std::vector<double> MPC::Solve(const VectorXd &state, const VectorXd &coeffs) {
   // Change this as you see fit.
   options += "Numeric max_cpu_time          0.5\n";
 
-  // place to return solution
+  // Place to return solution.
   CppAD::ipopt::solve_result<Dvector> solution;
 
-  // solve the problem
+  // Solve the problem.
   CppAD::ipopt::solve<Dvector, FG_eval>(
       options, vars, vars_lowerbound, vars_upperbound, constraints_lowerbound,
       constraints_upperbound, fg_eval, solution);
 
-  // Check some of the solution values
+  // Check some of the solution values.
   ok &= solution.status == CppAD::ipopt::solve_result<Dvector>::success;
 
   // Cost
@@ -218,7 +247,8 @@ std::vector<double> MPC::Solve(const VectorXd &state, const VectorXd &coeffs) {
   std::cout << "Cost " << cost << std::endl;
 
   // Returning the first actuator value as well as all predicted way points for visualization purposes.
-  // Not returning very first predicted points b/c in the vechicle's coordinate system it will always be 0.
+  // Not returning the very first predicted points b/c in the vechicle's coordinate system it will
+  // always be 0.
   std::vector<double> result;
   result.push_back(solution.x[delta_start]);
   result.push_back(solution.x[a_start]);

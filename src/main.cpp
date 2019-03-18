@@ -11,7 +11,7 @@
 #include "json.hpp"
 #include "MPC.h"
 
-// for convenience
+// For convenience.
 using nlohmann::json;
 using std::string;
 using std::vector;
@@ -48,11 +48,14 @@ int main() {
           double psi = j[1]["psi"];
           double v = j[1]["speed"];
 
-          // Transforming wayspoints from global map into vehicles' own coordinate system
+          // Transforming waypoints from global map into vehicles' own coordinate system.
           // This is great for both visualization and for calculating CTE as per projects
           // tips and tricks section.
           // Without such normalization MPC behaves very unstable b/c optimized values are
-          // not well conditioned.
+          // not well conditioned. B/c of the latency of 100ms the visualization however may be off
+          // the actual points. I realized for true visualization I would need to transform the actual
+          // waypoints and MPC points to the coordinate system of the vehicle 100ms ago, but I decided
+          // not to do that.
           for (int i = 0; i < ptsx.size(); i++) {
             double delta_x = ptsx[i] - px;
             double delta_y = ptsy[i] - py;
@@ -66,7 +69,7 @@ int main() {
 
           auto coeffs = polyfit(ptsx_, ptsy_, 3);
 
-          // Calculate CTE and PsiE
+          // Calculate CTE and PsiE.
           // No subtraction by current's vehicle position in Y b/c we transformed into vehicles coord system.
           // Similarly, for epsi, our current direction is always at 0 degrees (b/c of the local coordinate system).
           auto cte = polyeval(coeffs, 0);
@@ -76,8 +79,8 @@ int main() {
           // State will be fed with now transformed coordinates in vehicle's coordinate system.
           state << 0, 0, 0, v, cte, epsi;
           auto vars = mpc.Solve(state, coeffs);
-           
-          // Multiplying steering value by -1 per tips and tricks in the project section.
+
+          // Following tips and tricks section, multiplying the steering value by -1 to model the actual vehicle control.
           double steer_value = -vars[0];
           double throttle_value = vars[1];
 
@@ -87,27 +90,26 @@ int main() {
           msgJson["steering_angle"] = steer_value / deg2rad(25);
           msgJson["throttle"] = throttle_value;
 
-          // Display the MPC predicted trajectory 
+          // Display the MPC predicted trajectory. As noted above, the display comes 100ms after actual points have been calculated thus,
+          // it may appear to be off the visual path quite often. It does not affect the actual trajectory of the vehicle as latency is
+          // taken into account in the model.
           vector<double> mpc_x_vals;
           vector<double> mpc_y_vals;
           vector<double> next_x_vals = ptsx;
           vector<double> next_y_vals = ptsy;
 
           // All predicted waypoints are located at index 2 and above. X coordinate is always followed by corresponding Y.
-          // Display the waypoints/reference line
-
-          for (int i = 2 ; i < vars.size(); i + 2){
+          // Display the waypoints/reference line.
+          for (int i = 2 ; i < vars.size(); i = i + 2){
             mpc_x_vals.push_back(vars[i]);
             mpc_y_vals.push_back(vars[i + 1]);
           }
-
 
           msgJson["mpc_x"] = mpc_x_vals;
           msgJson["mpc_y"] = mpc_y_vals;
 
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
-
 
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
           std::cout << msg << std::endl;
